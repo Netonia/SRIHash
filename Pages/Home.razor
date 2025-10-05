@@ -1,0 +1,188 @@
+﻿@page "/"
+@inject IJSRuntime JSRuntime
+
+<PageTitle>SRI Hash Generator</PageTitle>
+
+<div class="container my-4">
+    <header class="text-center mb-4">
+        <h1>SRI Hash Generator</h1>
+        <p class="lead">Generate Subresource Integrity (SRI) hashes for your resources</p>
+        <p class="text-muted">
+            <a href="https://github.com/Netonia/SRIHash" target="_blank" rel="noopener">GitHub Repository</a>
+        </p>
+    </header>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="urlInput" class="form-label">URL or paste resource content</label>
+                <input 
+                    type="text" 
+                    class="form-control" 
+                    id="urlInput" 
+                    @bind="inputUrl" 
+                    placeholder="https://example.com/script.js or paste text content"
+                    aria-label="URL or resource content input" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label d-block">Hash Algorithm</label>
+                <div class="btn-group" role="group" aria-label="Hash algorithm selection">
+                    <input type="radio" class="btn-check" name="algorithm" id="sha256" value="SHA-256" 
+                           checked="@(selectedAlgorithm == "SHA-256")" @onchange="@(() => selectedAlgorithm = "SHA-256")" />
+                    <label class="btn btn-outline-primary" for="sha256">SHA-256</label>
+
+                    <input type="radio" class="btn-check" name="algorithm" id="sha384" value="SHA-384" 
+                           checked="@(selectedAlgorithm == "SHA-384")" @onchange="@(() => selectedAlgorithm = "SHA-384")" />
+                    <label class="btn btn-outline-primary" for="sha384">SHA-384</label>
+
+                    <input type="radio" class="btn-check" name="algorithm" id="sha512" value="SHA-512" 
+                           checked="@(selectedAlgorithm == "SHA-512")" @onchange="@(() => selectedAlgorithm = "SHA-512")" />
+                    <label class="btn btn-outline-primary" for="sha512">SHA-512</label>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" @onclick="CalculateHash" disabled="@isProcessing">
+                @if (isProcessing)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    <span>Processing...</span>
+                }
+                else
+                {
+                    <span>Hash</span>
+                }
+            </button>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger mt-3" role="alert">
+                    <strong>Error:</strong> @errorMessage
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(sriHash))
+            {
+                <div class="mt-4">
+                    <label for="resultOutput" class="form-label">SRI Hash Result</label>
+                    <div class="input-group">
+                        <input 
+                            type="text" 
+                            class="form-control font-monospace" 
+                            id="resultOutput" 
+                            value="@sriHash" 
+                            readonly 
+                            aria-label="SRI hash result" />
+                        <button class="btn btn-outline-secondary" type="button" @onclick="CopyToClipboard">
+                            @if (showCopied)
+                            {
+                                <span>✓ Copied!</span>
+                            }
+                            else
+                            {
+                                <span>Copy</span>
+                            }
+                        </button>
+                    </div>
+
+                    <div class="mt-3">
+                        <p class="fw-bold">Usage Example:</p>
+                        <pre class="bg-light p-3 rounded"><code>&lt;script src="@(inputUrl.StartsWith("http") ? inputUrl : "YOUR_URL")"
+        integrity="@sriHash"
+        crossorigin="anonymous"&gt;&lt;/script&gt;</code></pre>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <footer class="mt-5 text-center text-muted">
+        <p>
+            <small>
+                This tool processes everything locally in your browser. No data is sent to any server.
+                <br/>
+                Licensed under <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>
+            </small>
+        </p>
+    </footer>
+</div>
+
+@code {
+    private string inputUrl = "";
+    private string selectedAlgorithm = "SHA-256";
+    private string sriHash = "";
+    private string errorMessage = "";
+    private bool isProcessing = false;
+    private bool showCopied = false;
+
+    private async Task CalculateHash()
+    {
+        errorMessage = "";
+        sriHash = "";
+        isProcessing = true;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(inputUrl))
+            {
+                errorMessage = "Please enter a URL or paste resource content.";
+                return;
+            }
+
+            // Determine if input is a URL or text content
+            bool isUrl = Uri.TryCreate(inputUrl, UriKind.Absolute, out var uri) 
+                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+            byte[] data;
+            
+            if (isUrl)
+            {
+                // Fetch resource from URL
+                data = await JSRuntime.InvokeAsync<byte[]>("sriHashHelper.fetchResource", inputUrl);
+            }
+            else
+            {
+                // Convert text content to bytes
+                data = System.Text.Encoding.UTF8.GetBytes(inputUrl);
+            }
+
+            // Calculate hash using Web Crypto API
+            var algorithm = selectedAlgorithm.Replace("-", "").ToLower(); // sha256, sha384, sha512
+            var hashBase64 = await JSRuntime.InvokeAsync<string>("sriHashHelper.calculateHash", data, algorithm);
+            
+            // Format as SRI hash
+            sriHash = $"{selectedAlgorithm.ToLower()}-{hashBase64}";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to calculate hash: {ex.Message}";
+            if (Uri.TryCreate(inputUrl, UriKind.Absolute, out _))
+            {
+                errorMessage += " The resource may not be accessible or does not allow cross-origin requests (CORS).";
+            }
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task CopyToClipboard()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("sriHashHelper.copyToClipboard", sriHash);
+            showCopied = true;
+            StateHasChanged();
+            
+            // Reset the "Copied" indicator after 2 seconds
+            await Task.Delay(2000);
+            showCopied = false;
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            // Silently fail if clipboard API is not available
+        }
+    }
+}
